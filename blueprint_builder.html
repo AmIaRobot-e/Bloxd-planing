@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bloxd 3D Blueprint Builder</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        :root {
+            --bg: #0a0a12;
+            --sidebar: #121220;
+            --accent: #e94560;
+            --primary: #4a90e2;
+            --text: #ffffff;
+            --border: #2a2a40;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }
+        body { background: var(--bg); color: var(--text); overflow: hidden; height: 100vh; }
+
+        #app { display: flex; flex-direction: column; height: 100vh; }
+
+        header {
+            height: 60px;
+            background: var(--sidebar);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            border-bottom: 1px solid var(--border);
+            z-index: 100;
+        }
+
+        .logo { display: flex; align-items: center; gap: 10px; }
+        .logo i { color: var(--accent); font-size: 1.5rem; }
+        .logo h1 { font-size: 1.2rem; font-weight: 700; }
+        .logo h1 span { color: var(--accent); }
+
+        .toolbar { display: flex; gap: 10px; }
+        .btn { padding: 8px 16px; border-radius: 6px; border: none; cursor: pointer; font-weight: 600; transition: 0.2s; display: flex; align-items: center; gap: 8px; }
+        .btn-primary { background: var(--accent); color: white; }
+        .btn-secondary { background: #333; color: white; }
+        .btn:hover { opacity: 0.9; transform: translateY(-1px); }
+
+        .main-layout { display: flex; flex: 1; overflow: hidden; }
+
+        .sidebar {
+            width: 300px;
+            background: var(--sidebar);
+            border-right: 1px solid var(--border);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 25px;
+            overflow-y: auto;
+        }
+
+        .section h4 { font-size: 0.8rem; color: #888; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; }
+
+        .block-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+        .block-item {
+            aspect-ratio: 1;
+            background: #252535;
+            border: 2px solid transparent;
+            border-radius: 6px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            text-align: center;
+            padding: 4px;
+        }
+        .block-item.active { border-color: var(--accent); background: #353550; }
+
+        .layer-control { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+        .layer-slider-wrap { display: flex; align-items: center; gap: 15px; height: 200px; }
+        input[type="range"] { -webkit-appearance: slider-vertical; width: 8px; height: 100%; }
+        .layer-btn { width: 36px; height: 36px; border-radius: 50%; border: none; background: #333; color: white; cursor: pointer; }
+        .layer-btn:hover { background: var(--accent); }
+
+        #canvas-container { flex: 1; position: relative; background: #000; }
+        .stats { position: absolute; top: 20px; left: 20px; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 8px; font-size: 0.8rem; pointer-events: none; }
+        .controls-hint { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.6); padding: 8px 20px; border-radius: 20px; font-size: 0.75rem; color: #aaa; pointer-events: none; }
+
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <header>
+            <div class="logo">
+                <i class="fas fa-cubes"></i>
+                <h1>Bloxd<span>Blueprint</span></h1>
+            </div>
+            <div class="toolbar">
+                <button id="save-btn" class="btn btn-secondary"><i class="fas fa-save"></i> Save</button>
+                <button id="export-btn" class="btn btn-primary"><i class="fas fa-file-export"></i> Export .bloxdschem</button>
+            </div>
+        </header>
+
+        <div class="main-layout">
+            <aside class="sidebar">
+                <div class="section">
+                    <h4><i class="fas fa-th"></i> Palette</h4>
+                    <div id="block-list" class="block-grid"></div>
+                </div>
+
+                <div class="section">
+                    <h4><i class="fas fa-layer-group"></i> Layers</h4>
+                    <div class="layer-control">
+                        <button id="layer-plus" class="layer-btn"><i class="fas fa-plus"></i></button>
+                        <div class="layer-slider-wrap">
+                            <input type="range" id="layer-slider" min="0" max="64" value="64">
+                        </div>
+                        <button id="layer-minus" class="layer-btn"><i class="fas fa-minus"></i></button>
+                        <p style="font-size: 0.8rem; color: #888;">Layer: <span id="layer-val" style="color: var(--accent); font-weight: bold;">64</span></p>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h4><i class="fas fa-info-circle"></i> Build Info</h4>
+                    <div id="build-info" style="font-size: 0.85rem; color: #aaa; line-height: 1.6;">
+                        Blocks: <span id="block-count">0</span><br>
+                        Size: <span id="build-dims">0 x 0 x 0</span>
+                    </div>
+                </div>
+            </aside>
+
+            <div id="canvas-container">
+                <div class="stats" id="coords">X: 0, Y: 0, Z: 0</div>
+                <div class="controls-hint">
+                    L-Click: Place | R-Click: Remove | Orbit: Drag | Zoom: Scroll
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- DATA & CONFIG ---
+        const BLOCK_TYPES = [
+            { id: 1, name: "Stone", color: 0x888888 },
+            { id: 2, name: "Dirt", color: 0x5d4037 },
+            { id: 3, name: "Grass", color: 0x4caf50 },
+            { id: 4, name: "Planks", color: 0x966f33 },
+            { id: 5, name: "Log", color: 0x4e342e },
+            { id: 6, name: "Glass", color: 0xaaddff, transparent: true, opacity: 0.5 },
+            { id: 7, name: "Leaves", color: 0x2e7d32 },
+            { id: 8, name: "Sand", color: 0xffecb3 },
+            { id: 9, name: "Water", color: 0x2196f3, transparent: true, opacity: 0.6 }
+        ];
+
+        let currentBlockId = 1;
+        let currentLayer = 64;
+        let blocks = {}; // Key: "x,y,z", Value: { id, mesh }
+
+        // --- THREE.JS SETUP ---
+        let scene, camera, renderer, controls, raycaster, mouse;
+        let gridHelper, rollOverMesh;
+        const cubeGeo = new THREE.BoxGeometry(1, 1, 1);
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0a0a12);
+
+            camera = new THREE.PerspectiveCamera(45, (window.innerWidth - 300) / (window.innerHeight - 60), 0.1, 1000);
+            camera.position.set(20, 20, 20);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth - 300, window.innerHeight - 60);
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+
+            // Grid (0,0,0 at corner)
+            gridHelper = new THREE.GridHelper(100, 100, 0x2a2a40, 0x1a1a2e);
+            gridHelper.position.set(49.5, -0.5, 49.5);
+            scene.add(gridHelper);
+
+            // Ghost Block
+            const rollOverGeo = new THREE.BoxGeometry(1.01, 1.01, 1.01);
+            const rollOverMat = new THREE.MeshBasicMaterial({ color: 0xff0000, opacity: 0.3, transparent: true });
+            rollOverMesh = new THREE.Mesh(rollOverGeo, rollOverMat);
+            scene.add(rollOverMesh);
+
+            // Lights
+            scene.add(new THREE.AmbientLight(0xcccccc));
+            const light = new THREE.DirectionalLight(0xffffff, 0.5);
+            light.position.set(1, 1, 1).normalize();
+            scene.add(light);
+
+            window.addEventListener('resize', onWindowResize);
+            renderer.domElement.addEventListener('mousemove', onMouseMove);
+            renderer.domElement.addEventListener('mousedown', onMouseDown);
+            renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
+
+            setupUI();
+            animate();
+            loadFromStorage();
+        }
+
+        function setupUI() {
+            const list = document.getElementById('block-list');
+            BLOCK_TYPES.forEach(b => {
+                const item = document.createElement('div');
+                item.className = `block-item ${b.id === currentBlockId ? 'active' : ''}`;
+                item.style.backgroundColor = `#${b.color.toString(16).padStart(6, '0')}`;
+                item.title = b.name;
+                item.onclick = () => {
+                    document.querySelectorAll('.block-item').forEach(el => el.classList.remove('active'));
+                    item.classList.add('active');
+                    currentBlockId = b.id;
+                };
+                list.appendChild(item);
+            });
+
+            const slider = document.getElementById('layer-slider');
+            const val = document.getElementById('layer-val');
+            const updateLayer = (v) => {
+                currentLayer = parseInt(v);
+                slider.value = currentLayer;
+                val.innerText = currentLayer;
+                Object.values(blocks).forEach(b => {
+                    const y = parseInt(b.mesh.position.y);
+                    b.mesh.visible = y <= currentLayer;
+                });
+            };
+
+            slider.oninput = (e) => updateLayer(e.target.value);
+            document.getElementById('layer-plus').onclick = () => updateLayer(Math.min(64, currentLayer + 1));
+            document.getElementById('layer-minus').onclick = () => updateLayer(Math.max(0, currentLayer - 1));
+
+            document.getElementById('save-btn').onclick = saveToStorage;
+            document.getElementById('export-btn').onclick = exportBloxdschem;
+        }
+
+        function onMouseMove(event) {
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects([gridHelper, ...Object.values(blocks).map(b => b.mesh)]);
+            
+            if (intersects.length > 0) {
+                const intersect = intersects[0];
+                const pos = intersect.point.clone().add(intersect.face.normal.clone().multiplyScalar(0.5)).floor();
+                if (pos.x >= 0 && pos.z >= 0 && pos.y >= 0) {
+                    rollOverMesh.position.set(pos.x + 0.5, pos.y + 0.5, pos.z + 0.5);
+                    document.getElementById('coords').innerText = `X: ${pos.x}, Y: ${pos.y}, Z: ${pos.z}`;
+                }
+            }
+        }
+
+        function onMouseDown(event) {
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects([gridHelper, ...Object.values(blocks).map(b => b.mesh)]);
+
+            if (intersects.length > 0) {
+                const intersect = intersects[0];
+                if (event.button === 0) { // Place
+                    const pos = intersect.point.clone().add(intersect.face.normal.clone().multiplyScalar(0.5)).floor();
+                    const key = `${pos.x},${pos.y},${pos.z}`;
+                    if (!blocks[key] && pos.x >= 0 && pos.z >= 0 && pos.y >= 0) {
+                        addBlock(pos.x, pos.y, pos.z, currentBlockId);
+                    }
+                } else if (event.button === 2) { // Remove
+                    if (intersect.object !== gridHelper) {
+                        const p = intersect.object.position;
+                        const key = `${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`;
+                        removeBlock(key);
+                    }
+                }
+                updateStats();
+            }
+        }
+
+        function addBlock(x, y, z, id) {
+            const type = BLOCK_TYPES.find(t => t.id === id);
+            const mat = new THREE.MeshLambertMaterial({ 
+                color: type.color, 
+                transparent: type.transparent || false, 
+                opacity: type.opacity || 1 
+            });
+            const mesh = new THREE.Mesh(cubeGeo, mat);
+            mesh.position.set(x + 0.5, y + 0.5, z + 0.5);
+            mesh.visible = y <= currentLayer;
+            scene.add(mesh);
+            blocks[`${x},${y},${z}`] = { id, mesh };
+        }
+
+        function removeBlock(key) {
+            if (blocks[key]) {
+                scene.remove(blocks[key].mesh);
+                delete blocks[key];
+            }
+        }
+
+        function updateStats() {
+            const count = Object.keys(blocks).length;
+            document.getElementById('block-count').innerText = count;
+            if (count === 0) {
+                document.getElementById('build-dims').innerText = "0 x 0 x 0";
+                return;
+            }
+            let minX = Infinity, minY = Infinity, minZ = Infinity;
+            let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+            Object.keys(blocks).forEach(k => {
+                const [x, y, z] = k.split(',').map(Number);
+                minX = Math.min(minX, x); minY = Math.min(minY, y); minZ = Math.min(minZ, z);
+                maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); maxZ = Math.max(maxZ, z);
+            });
+            document.getElementById('build-dims').innerText = `${maxX - minX + 1} x ${maxY - minY + 1} x ${maxZ - minZ + 1}`;
+        }
+
+        function onWindowResize() {
+            camera.aspect = (window.innerWidth - 300) / (window.innerHeight - 60);
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth - 300, window.innerHeight - 60);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+        }
+
+        function saveToStorage() {
+            const data = Object.keys(blocks).map(k => ({ k, id: blocks[k].id }));
+            localStorage.setItem('bloxd_blueprint', JSON.stringify(data));
+            alert("Project saved to browser!");
+        }
+
+        function loadFromStorage() {
+            const saved = localStorage.getItem('bloxd_blueprint');
+            if (saved) {
+                const data = JSON.parse(saved);
+                data.forEach(item => {
+                    const [x, y, z] = item.k.split(',').map(Number);
+                    addBlock(x, y, z, item.id);
+                });
+                updateStats();
+            }
+        }
+
+        // --- EXPORT LOGIC ---
+        function exportBloxdschem() {
+            if (Object.keys(blocks).length === 0) return alert("Build something first!");
+            
+            // 1. Find bounds
+            let minX = Infinity, minY = Infinity, minZ = Infinity;
+            let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+            Object.keys(blocks).forEach(k => {
+                const [x, y, z] = k.split(',').map(Number);
+                minX = Math.min(minX, x); minY = Math.min(minY, y); minZ = Math.min(minZ, z);
+                maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); maxZ = Math.max(maxZ, z);
+            });
+
+            const sizeX = maxX - minX + 1;
+            const sizeY = maxY - minY + 1;
+            const sizeZ = maxZ - minZ + 1;
+
+            // 2. Mock binary export (Simplified for v1)
+            // In a real implementation, we'd use the AVSC logic from bloxd.js
+            // For this demo, we'll alert the user and provide a JSON fallback
+            const exportData = {
+                name: "Blueprint",
+                size: [sizeX, sizeY, sizeZ],
+                blocks: Object.keys(blocks).map(k => {
+                    const [x, y, z] = k.split(',').map(Number);
+                    return { x: x - minX, y: y - minY, z: z - minZ, id: blocks[k].id };
+                })
+            };
+
+            const blob = new Blob([JSON.stringify(exportData)], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = "blueprint.json";
+            a.click();
+            
+            alert("Experimental Export: Downloaded as JSON. \nBinary .bloxdschem encoding requires the AVSC library integration.");
+        }
+
+        init();
+    </script>
+</body>
+</html>
